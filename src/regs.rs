@@ -1,5 +1,5 @@
-use std::fmt::{Display, Formatter};
 use bitflags::bitflags;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CpuFlags(u8);
@@ -23,7 +23,7 @@ impl Display for CpuFlags {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Regs {
     pub pc: u16,
     pub sp: u8,
@@ -50,13 +50,10 @@ impl Regs {
 
 impl Display for Regs {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Regs(pc={},sp={},a={},x={},y={},flags={})",
-            self.pc,
-            self.sp,
-            self.a,
-            self.x,
-            self.y,
-            self.flags
+        write!(
+            f,
+            "Regs(pc={},sp={},a={},x={},y={},flags={})",
+            self.pc, self.sp, self.a, self.x, self.y, self.flags
         )
     }
 }

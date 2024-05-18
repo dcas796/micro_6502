@@ -10,10 +10,13 @@ use crate::regs::{CpuFlags, Regs};
 
 #[derive(Parser)]
 pub struct Args {
+    /// The path to the binary to execute
     pub path: PathBuf,
+    /// Initialize memory with the file provided
     #[arg(long, default_value = None)]
     pub memory: Option<PathBuf>,
-    /// How to use: --regs x=3,y=1
+    /// Initialize the CPU registers
+    /// Example: --regs x=3,y=2
     #[arg(long)]
     pub regs: RegsArg,
 }

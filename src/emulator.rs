@@ -1,4 +1,3 @@
-use bitflags::Flags;
 use crate::bus::ReadWritable;
 use crate::decoder::Decoder;
 use crate::instruction::{AddressingMode, Instruction, InstructionName};
@@ -16,14 +15,17 @@ impl Emulator {
         Self {
             decoder,
             memory,
-            regs
+            regs,
         }
     }
 
     pub fn run_until_completion(&mut self) {
         self.set_pc(0);
         while let Some(instruction) = self.decode_next() {
-            println!("Executing instruction: {:#06x}: {}", self.regs.pc, instruction);
+            println!(
+                "Executing instruction: {:#06x}: {}",
+                self.regs.pc, instruction
+            );
             self.execute(instruction);
         }
     }
@@ -54,9 +56,15 @@ impl Emulator {
 
     fn get_absolute_address(&self, mode: AddressingMode, address: u16) -> u16 {
         match mode {
-            AddressingMode::Implicit => panic!("Cannot get an address when addressing_mode=Implicit"),
-            AddressingMode::Accumulator => panic!("Cannot get an address when addressing_mode=Accumulator"),
-            AddressingMode::Immediate => panic!("Cannot get an address when addressing_mode=Immediate"),
+            AddressingMode::Implicit => {
+                panic!("Cannot get an address when addressing_mode=Implicit")
+            }
+            AddressingMode::Accumulator => {
+                panic!("Cannot get an address when addressing_mode=Accumulator")
+            }
+            AddressingMode::Immediate => {
+                panic!("Cannot get an address when addressing_mode=Immediate")
+            }
             AddressingMode::ZeroPage => address,
             AddressingMode::ZeroPageX => address + self.regs.x as u16,
             AddressingMode::ZeroPageY => address + self.regs.y as u16,
@@ -108,7 +116,7 @@ impl Emulator {
             panic!("Ran out of stack");
         }
         self.memory.write_to_stack(self.regs.sp, byte);
-        
+
         self.regs.sp -= 1;
         println!("sp - 1 = {:#04x}", self.regs.sp);
     }
@@ -303,9 +311,7 @@ impl Emulator {
                 self.regs.a = self.pull();
                 self.set_zero_or_neg(self.regs.a);
             }
-            InstructionName::plp => {
-                self.pull_flags()
-            }
+            InstructionName::plp => self.pull_flags(),
 
             InstructionName::and => {
                 self.regs.a = self.regs.a & self.read_byte(ins.addressing_mode, ins.operand);
@@ -434,42 +440,58 @@ impl Emulator {
             }
 
             InstructionName::bcc => {
-                if self.regs.flags.contains(CpuFlags::CARRY) { return; }
+                if self.regs.flags.contains(CpuFlags::CARRY) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bcs => {
-                if !self.regs.flags.contains(CpuFlags::CARRY) { return; }
+                if !self.regs.flags.contains(CpuFlags::CARRY) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::beq => {
-                if !self.regs.flags.contains(CpuFlags::ZERO) { return; }
+                if !self.regs.flags.contains(CpuFlags::ZERO) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bmi => {
-                if !self.regs.flags.contains(CpuFlags::NEG) { return; }
+                if !self.regs.flags.contains(CpuFlags::NEG) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bne => {
-                if self.regs.flags.contains(CpuFlags::ZERO) { return; }
+                if self.regs.flags.contains(CpuFlags::ZERO) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bpl => {
-                if !self.regs.flags.contains(CpuFlags::NEG) { return; }
+                if !self.regs.flags.contains(CpuFlags::NEG) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bvc => {
-                if self.regs.flags.contains(CpuFlags::OVERFLOW) { return; }
+                if self.regs.flags.contains(CpuFlags::OVERFLOW) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bvs => {
-                if !self.regs.flags.contains(CpuFlags::OVERFLOW) { return; }
+                if !self.regs.flags.contains(CpuFlags::OVERFLOW) {
+                    return;
+                }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }

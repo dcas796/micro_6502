@@ -1,9 +1,11 @@
 use std::{
+    fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
     str::FromStr,
 };
 
+use bitflags::Flags;
 use clap::Parser;
 
 use crate::regs::{CpuFlags, Regs};
@@ -17,7 +19,7 @@ pub struct Args {
     pub memory: Option<PathBuf>,
     /// Initialize the CPU registers
     /// Example: --regs x=3,y=2
-    #[arg(long)]
+    #[arg(long, default_value_t)]
     pub regs: RegsArg,
 }
 
@@ -80,5 +82,20 @@ impl FromStr for RegsArg {
         }
 
         Ok(Self { regs })
+    }
+}
+
+impl Display for RegsArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pc={},sp={},a={},x={},y={},flags={}",
+            self.pc,
+            self.sp,
+            self.a,
+            self.x,
+            self.y,
+            self.flags.bits()
+        )
     }
 }

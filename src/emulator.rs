@@ -1,22 +1,21 @@
-use crate::bus::ReadWritable;
 use crate::decoder::Decoder;
 use crate::instruction::{AddressingMode, Instruction, InstructionName};
-use crate::mem::Memory;
+use crate::readwritable::ReadWritable;
 use crate::regs::{CpuFlags, Regs};
 
-pub struct Emulator {
-    decoder: Decoder,
-    memory: Memory,
-    regs: Regs,
+pub struct Emulator<'a> {
+    decoder: &'a mut Decoder,
+    bus: &'a mut dyn ReadWritable,
+    regs: &'a mut Regs,
 }
 
-impl Emulator {
-    pub fn new(decoder: Decoder, memory: Memory, regs: Regs) -> Self {
-        Self {
-            decoder,
-            memory,
-            regs,
-        }
+impl<'a> Emulator<'a> {
+    pub fn new(
+        decoder: &'a mut Decoder,
+        bus: &'a mut dyn ReadWritable,
+        regs: &'a mut Regs,
+    ) -> Self {
+        Self { decoder, bus, regs }
     }
 
     pub fn run_until_completion(&mut self) {
@@ -28,10 +27,6 @@ impl Emulator {
             );
             self.execute(instruction);
         }
-    }
-
-    pub fn get_memory(&self) -> &Memory {
-        &self.memory
     }
 
     pub fn get_regs(&self) -> &Regs {
@@ -46,6 +41,14 @@ impl Emulator {
 
     fn inc_pc(&mut self) {
         self.set_pc(self.regs.pc + 1);
+    }
+
+    fn read_from_stack(&self) -> u8 {
+        self.bus.read(self.regs.sp as u16 + 0x100)
+    }
+
+    fn write_to_stack(&mut self, byte: u8) {
+        self.bus.write(self.regs.sp as u16 + 0x100, byte);
     }
 
     fn decode_next(&mut self) -> Option<Instruction> {
@@ -99,7 +102,7 @@ impl Emulator {
             return address as u8;
         }
         let absolute_address = self.get_absolute_address(mode, address);
-        self.memory.read(absolute_address)
+        self.bus.read(absolute_address)
     }
 
     fn write_byte(&mut self, mode: AddressingMode, address: u16, byte: u8) {
@@ -108,14 +111,14 @@ impl Emulator {
             return;
         }
         let absolute_address = self.get_absolute_address(mode, address);
-        self.memory.write(absolute_address, byte);
+        self.bus.write(absolute_address, byte);
     }
 
     fn push(&mut self, byte: u8) {
         if self.regs.sp == 0 {
             panic!("Ran out of stack");
         }
-        self.memory.write_to_stack(self.regs.sp, byte);
+        self.write_to_stack(byte);
 
         self.regs.sp -= 1;
         println!("sp - 1 = {:#04x}", self.regs.sp);
@@ -126,7 +129,7 @@ impl Emulator {
             panic!("Cannot pull from an empty stack");
         }
         self.regs.sp += 1;
-        let byte = self.memory.read_from_stack(self.regs.sp);
+        let byte = self.read_from_stack();
         byte
     }
 

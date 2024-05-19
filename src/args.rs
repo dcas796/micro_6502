@@ -5,7 +5,6 @@ use std::{
     str::FromStr,
 };
 
-use bitflags::Flags;
 use clap::Parser;
 
 use crate::regs::{CpuFlags, Regs};

@@ -1,5 +1,6 @@
-use crate::bus::ReadWritable;
 use std::fmt::{Display, Formatter};
+
+use crate::readwritable::ReadWritable;
 
 pub const MEM_SIZE: usize = 0x10000;
 pub struct Memory {
@@ -15,14 +16,6 @@ impl Memory {
 
     pub const fn new_from_bytes(bytes: [u8; MEM_SIZE]) -> Self {
         Self { buffer: bytes }
-    }
-
-    pub fn read_from_stack(&mut self, ptr: u8) -> u8 {
-        self.buffer[0x0100 + ptr as usize]
-    }
-
-    pub fn write_to_stack(&mut self, ptr: u8, byte: u8) {
-        self.buffer[0x0100 + ptr as usize] = byte;
     }
 }
 

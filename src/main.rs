@@ -10,21 +10,21 @@ use crate::mem::{Memory, MEM_SIZE};
 use std::fs::read;
 
 mod args;
-mod bus;
 mod decoder;
 mod emulator;
 mod instruction;
 mod mem;
+mod readwritable;
 mod regs;
 
 fn main() {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let registry = InstructionRegistry::new();
     let instruction_bytes =
         read(&args.path).expect(format!("Cannot find '{}'", args.path.display()).as_str());
-    let decoder = Decoder::new(registry, instruction_bytes);
-    let memory = if let Some(memory_path) = args.memory {
+    let mut decoder = Decoder::new(registry, instruction_bytes);
+    let mut memory = if let Some(memory_path) = args.memory {
         let raw_bytes =
             read(memory_path).expect(format!("Cannot find '{}'", args.path.display()).as_str());
         assert!(
@@ -37,8 +37,8 @@ fn main() {
     } else {
         Memory::new()
     };
-    let mut emulator = Emulator::new(decoder, memory, *args.regs);
+    let mut emulator = Emulator::new(&mut decoder, &mut memory, &mut args.regs);
     emulator.run_until_completion();
     println!("{}", emulator.get_regs());
-    println!("{}", emulator.get_memory());
+    println!("{}", &memory);
 }

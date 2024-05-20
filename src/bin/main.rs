@@ -1,3 +1,5 @@
+use clap::Parser;
+
 use std::{
     fmt::Display,
     ops::{Deref, DerefMut},
@@ -5,9 +7,38 @@ use std::{
     str::FromStr,
 };
 
-use clap::Parser;
+use micro_6502::decoder::Decoder;
+use micro_6502::emulator::Emulator;
+use micro_6502::instruction::InstructionRegistry;
+use micro_6502::mem::{Memory, MEM_SIZE};
+use micro_6502::regs::{CpuFlags, Regs};
+use std::fs::read;
 
-use crate::regs::{CpuFlags, Regs};
+fn main() {
+    let mut args = Args::parse();
+
+    let registry = InstructionRegistry::new();
+    let instruction_bytes =
+        read(&args.path).expect(format!("Cannot find '{}'", args.path.display()).as_str());
+    let mut decoder = Decoder::new(registry, instruction_bytes);
+    let mut memory = if let Some(memory_path) = args.memory {
+        let raw_bytes =
+            read(memory_path).expect(format!("Cannot find '{}'", args.path.display()).as_str());
+        assert!(
+            raw_bytes.len() <= MEM_SIZE,
+            "Inputted memory file is larger than {MEM_SIZE} bytes."
+        );
+        let mut raw_bytes_slice = [0u8; MEM_SIZE];
+        raw_bytes_slice[..raw_bytes.len()].clone_from_slice(&raw_bytes);
+        Memory::new_from_bytes(raw_bytes_slice)
+    } else {
+        Memory::new()
+    };
+    let mut emulator = Emulator::new(&mut decoder, &mut memory, &mut args.regs);
+    emulator.run_until_completion();
+    println!("{}", emulator.get_regs());
+    println!("{}", &memory);
+}
 
 #[derive(Parser)]
 pub struct Args {

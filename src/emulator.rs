@@ -21,10 +21,6 @@ impl<'a> Emulator<'a> {
     pub fn run_until_completion(&mut self) {
         self.set_pc(0);
         while let Some(instruction) = self.decode_next() {
-            println!(
-                "Executing instruction: {:#06x}: {}",
-                self.regs.pc, instruction
-            );
             self.execute(instruction);
         }
     }
@@ -34,7 +30,6 @@ impl<'a> Emulator<'a> {
     }
 
     fn set_pc(&mut self, pc: u16) {
-        println!("PC -> {:#06x}", pc);
         self.regs.pc = pc;
         self.decoder.seek(pc);
     }
@@ -121,7 +116,6 @@ impl<'a> Emulator<'a> {
         self.write_to_stack(byte);
 
         self.regs.sp -= 1;
-        println!("sp - 1 = {:#04x}", self.regs.sp);
     }
 
     fn pull(&mut self) -> u8 {
@@ -143,7 +137,6 @@ impl<'a> Emulator<'a> {
         let mut pc = self.pull() as u16;
         pc |= (self.pull() as u16) << 8;
         pc += offset;
-        println!("PC <- {:#04x}", pc);
         pc
     }
 
@@ -435,7 +428,6 @@ impl<'a> Emulator<'a> {
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.push_pc(0);
                 self.set_pc(addr);
-                println!("x = {}", self.regs.x);
             }
             InstructionName::rts => {
                 let pc = self.pull_pc(0);

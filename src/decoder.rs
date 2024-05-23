@@ -1,95 +1,56 @@
 use crate::instruction::{AddressingMode, Instruction, InstructionRegistry};
 
 pub struct Decoder {
-    buffer: Vec<u8>,
-    ptr: u16,
     registry: InstructionRegistry,
+    next_byte: Box<dyn FnMut() -> u8>,
 }
 
 impl Decoder {
-    pub fn new(registry: InstructionRegistry, bytes: Vec<u8>) -> Self {
-        if bytes.len() == 0 {
-            panic!("Buffer cannot be empty")
-        }
-        if bytes.len() > 0x10000 {
-            panic!("Buffer cannot be bigger than 0x10000 bytes")
-        }
+    pub fn new(next_byte: Box<dyn FnMut() -> u8>) -> Self {
         Self {
-            buffer: bytes,
-            ptr: 0,
-            registry: registry,
+            registry: InstructionRegistry::new(),
+            next_byte,
         }
     }
 
-    pub fn offset(&self) -> u16 {
-        self.ptr
+    pub fn next_word(&mut self) -> u16 {
+        let lower = (self.next_byte)() as u16;
+        let higher = (self.next_byte)() as u16;
+
+        (higher << 8) | lower
     }
 
-    pub fn seek(&mut self, offset: u16) {
-        if offset >= self.buffer.len() as u16 {
-            panic!("Cannot seek further than the length of the buffer")
-        }
-        self.ptr = offset;
-    }
-
-    pub fn next(&mut self) -> Option<u8> {
-        if self.ptr >= self.buffer.len() as u16 {
-            return None;
-        }
-
-        let byte = self.buffer[self.ptr as usize];
-        self.ptr += 1;
-        return Some(byte);
-    }
-
-    pub fn next_word(&mut self) -> Option<u16> {
-        let lower = self.next()? as u16;
-        let higher = self.next()? as u16;
-
-        Some((higher << 8) | lower)
-    }
-
-    pub fn decode_next(&mut self) -> Option<Instruction> {
-        let byte = self.next()?;
-        let mut instruction = self.registry.get_instruction_by_op_code(byte, 0)?;
+    pub fn decode_next(&mut self) -> Instruction {
+        let byte = (self.next_byte)();
+        let mut instruction = self
+            .registry
+            .get_instruction_by_op_code(byte, 0)
+            .expect(format!("Cannot read op code {:#04x}", byte).as_str());
 
         match instruction.addressing_mode {
             // No operand
-            AddressingMode::Implicit |
-            AddressingMode::Accumulator => {}
+            AddressingMode::Implicit | AddressingMode::Accumulator => {}
 
             // Byte operand
-            AddressingMode::Immediate |
-            AddressingMode::ZeroPage |
-            AddressingMode::ZeroPageX |
-            AddressingMode::ZeroPageY |
-            AddressingMode::Relative |
-            AddressingMode::IndirectX |
-            AddressingMode::IndirectY => {
-                let operand = self.next()?;
-                instruction.operand = operand as u16;
+            AddressingMode::Immediate
+            | AddressingMode::ZeroPage
+            | AddressingMode::ZeroPageX
+            | AddressingMode::ZeroPageY
+            | AddressingMode::Relative
+            | AddressingMode::IndirectX
+            | AddressingMode::IndirectY => {
+                instruction.operand = (self.next_byte)() as u16;
             }
 
             // Word operand
-            AddressingMode::Absolute |
-            AddressingMode::AbsoluteX |
-            AddressingMode::AbsoluteY |
-            AddressingMode::Indirect => {
-                let operand = self.next_word()?;
-                instruction.operand = operand;
+            AddressingMode::Absolute
+            | AddressingMode::AbsoluteX
+            | AddressingMode::AbsoluteY
+            | AddressingMode::Indirect => {
+                instruction.operand = self.next_word();
             }
         }
 
-        Some(instruction)
-    }
-
-    pub fn decode_all(mut self) -> Vec<Instruction> {
-        let mut instructions = vec![];
-
-        while let Some(instruction) = self.decode_next() {
-            instructions.push(instruction);
-        }
-
-        instructions
+        instruction
     }
 }

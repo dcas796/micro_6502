@@ -1,3 +1,4 @@
+.org 0
 start:
 ; x will be set in the emulator
 jsr fib
@@ -35,4 +36,8 @@ tax
 pla
 rts
 end:
-nop
+brk ; end the program by signalling the emulator it is done
+
+.org 0xfffc
+.word start ; Reset vector
+.word 0x0000

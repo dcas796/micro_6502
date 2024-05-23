@@ -1,55 +1,91 @@
+use std::cell::{Ref, RefCell, RefMut};
+use std::rc::Rc;
+
 use crate::decoder::Decoder;
 use crate::instruction::{AddressingMode, Instruction, InstructionName};
 use crate::readwritable::ReadWritable;
 use crate::regs::{CpuFlags, Regs};
 
-pub struct Emulator<'a> {
-    decoder: &'a mut Decoder,
-    bus: &'a mut dyn ReadWritable,
-    regs: &'a mut Regs,
+const RESET_VEC_LOW_ADDR: u16 = 0xfffc;
+const RESET_VEC_HIGH_ADDR: u16 = 0xfffd;
+
+pub struct Emulator {
+    decoder: Decoder,
+    regs: Rc<RefCell<Regs>>,
+    bus: Rc<RefCell<Box<dyn ReadWritable>>>,
+    stop_signalled: bool,
 }
 
-impl<'a> Emulator<'a> {
-    pub fn new(
-        decoder: &'a mut Decoder,
-        bus: &'a mut dyn ReadWritable,
-        regs: &'a mut Regs,
-    ) -> Self {
-        Self { decoder, bus, regs }
+impl Emulator {
+    pub fn new(bus: Box<dyn ReadWritable>) -> Self {
+        let bus_rc = Rc::new(RefCell::new(bus));
+        let regs = Rc::new(RefCell::new(Regs::new()));
+        let next_byte = {
+            let bus_rc = bus_rc.clone();
+            let regs = regs.clone();
+            move || {
+                let bus = bus_rc.borrow();
+                let mut regs = regs.borrow_mut();
+                let byte = bus.read(regs.pc);
+                regs.pc += 1;
+                byte
+            }
+        };
+        let decoder = Decoder::new(Box::new(next_byte));
+        Self {
+            decoder,
+            regs,
+            bus: bus_rc,
+            stop_signalled: false,
+        }
     }
 
-    pub fn run_until_completion(&mut self) {
-        self.set_pc(0);
-        while let Some(instruction) = self.decode_next() {
+    pub fn run_until_break(&mut self) {
+        let reset_addr = self.get_reset_addr();
+        self.set_pc(reset_addr);
+        while !self.stop_signalled {
+            let instruction = self.decode_next();
             self.execute(instruction);
         }
     }
 
-    pub fn get_regs(&self) -> &Regs {
-        &self.regs
+    pub fn get_regs(&self) -> Ref<Regs> {
+        self.regs.borrow()
+    }
+
+    pub fn get_regs_mut(&mut self) -> RefMut<Regs> {
+        self.regs.borrow_mut()
+    }
+
+    pub fn get_bus(&self) -> Ref<Box<dyn ReadWritable>> {
+        self.bus.borrow()
+    }
+
+    pub fn get_bus_mut(&mut self) -> RefMut<Box<dyn ReadWritable>> {
+        self.bus.borrow_mut()
     }
 
     fn set_pc(&mut self, pc: u16) {
-        self.regs.pc = pc;
-        self.decoder.seek(pc);
-    }
-
-    fn inc_pc(&mut self) {
-        self.set_pc(self.regs.pc + 1);
+        self.get_regs_mut().pc = pc;
     }
 
     fn read_from_stack(&self) -> u8 {
-        self.bus.read(self.regs.sp as u16 + 0x100)
+        self.get_bus().read(self.get_regs().sp as u16 + 0x100)
     }
 
     fn write_to_stack(&mut self, byte: u8) {
-        self.bus.write(self.regs.sp as u16 + 0x100, byte);
+        let addr = self.get_regs().sp as u16 + 0x100;
+        self.get_bus_mut().write(addr, byte);
     }
 
-    fn decode_next(&mut self) -> Option<Instruction> {
-        let ins = self.decoder.decode_next();
-        self.regs.pc = self.decoder.offset();
-        ins
+    fn get_reset_addr(&mut self) -> u16 {
+        let low = self.get_bus().read(RESET_VEC_LOW_ADDR) as u16;
+        let high = self.get_bus().read(RESET_VEC_HIGH_ADDR) as u16;
+        (high << 8) | low
+    }
+
+    fn decode_next(&mut self) -> Instruction {
+        self.decoder.decode_next()
     }
 
     fn get_absolute_address(&self, mode: AddressingMode, address: u16) -> u16 {
@@ -64,19 +100,19 @@ impl<'a> Emulator<'a> {
                 panic!("Cannot get an address when addressing_mode=Immediate")
             }
             AddressingMode::ZeroPage => address,
-            AddressingMode::ZeroPageX => address + self.regs.x as u16,
-            AddressingMode::ZeroPageY => address + self.regs.y as u16,
-            AddressingMode::Relative => self.regs.pc + address,
+            AddressingMode::ZeroPageX => address + self.get_regs().x as u16,
+            AddressingMode::ZeroPageY => address + self.get_regs().y as u16,
+            AddressingMode::Relative => self.get_regs().pc + address,
             AddressingMode::Absolute => address,
-            AddressingMode::AbsoluteX => address + self.regs.x as u16,
-            AddressingMode::AbsoluteY => address + self.regs.y as u16,
+            AddressingMode::AbsoluteX => address + self.get_regs().x as u16,
+            AddressingMode::AbsoluteY => address + self.get_regs().y as u16,
             AddressingMode::Indirect => {
                 let mut addr = self.read_byte(AddressingMode::Absolute, address) as u16;
                 addr |= (self.read_byte(AddressingMode::Absolute, address + 1) as u16) << 8;
                 addr
             }
             AddressingMode::IndirectX => {
-                let address = address + self.regs.x as u16;
+                let address = address + self.get_regs().x as u16;
                 let mut addr = self.read_byte(AddressingMode::Absolute, address) as u16;
                 addr |= (self.read_byte(AddressingMode::Absolute, address + 1) as u16) << 8;
                 addr
@@ -84,51 +120,51 @@ impl<'a> Emulator<'a> {
             AddressingMode::IndirectY => {
                 let mut addr = self.read_byte(AddressingMode::Absolute, address) as u16;
                 addr |= (self.read_byte(AddressingMode::Absolute, address + 1) as u16) << 8;
-                addr + self.regs.y as u16
+                addr + self.get_regs().y as u16
             }
         }
     }
 
     fn read_byte(&self, mode: AddressingMode, address: u16) -> u8 {
         if mode == AddressingMode::Accumulator {
-            return self.regs.a;
+            return self.get_regs().a;
         }
         if mode == AddressingMode::Immediate {
             return address as u8;
         }
         let absolute_address = self.get_absolute_address(mode, address);
-        self.bus.read(absolute_address)
+        self.get_bus().read(absolute_address)
     }
 
     fn write_byte(&mut self, mode: AddressingMode, address: u16, byte: u8) {
         if mode == AddressingMode::Accumulator {
-            self.regs.a = byte;
+            self.get_regs_mut().a = byte;
             return;
         }
         let absolute_address = self.get_absolute_address(mode, address);
-        self.bus.write(absolute_address, byte);
+        self.get_bus_mut().write(absolute_address, byte);
     }
 
     fn push(&mut self, byte: u8) {
-        if self.regs.sp == 0 {
+        if self.get_regs().sp == 0 {
             panic!("Ran out of stack");
         }
         self.write_to_stack(byte);
 
-        self.regs.sp -= 1;
+        self.get_regs_mut().sp -= 1;
     }
 
     fn pull(&mut self) -> u8 {
-        if self.regs.sp == 0xff {
+        if self.get_regs().sp == 0xff {
             panic!("Cannot pull from an empty stack");
         }
-        self.regs.sp += 1;
+        self.get_regs_mut().sp += 1;
         let byte = self.read_from_stack();
         byte
     }
 
     fn push_pc(&mut self, offset: u16) {
-        let pc = self.regs.pc + offset;
+        let pc = self.get_regs().pc + offset;
         self.push((pc >> 8) as u8);
         self.push((pc & 0xff) as u8);
     }
@@ -141,29 +177,30 @@ impl<'a> Emulator<'a> {
     }
 
     fn push_flags(&mut self) {
-        self.regs.flags.insert(CpuFlags::BREAK);
-        self.push(self.regs.flags.bits());
+        self.get_regs_mut().flags.insert(CpuFlags::BREAK);
+        let flags = self.get_regs().flags.bits();
+        self.push(flags);
     }
 
     fn pull_flags(&mut self) {
-        let contains_break = self.regs.flags.contains(CpuFlags::BREAK);
-        self.regs.flags = CpuFlags::from_bits(self.pull()).unwrap();
+        let contains_break = self.get_regs().flags.contains(CpuFlags::BREAK);
+        self.get_regs_mut().flags = CpuFlags::from_bits(self.pull()).unwrap();
         if contains_break {
-            self.regs.flags.insert(CpuFlags::BREAK);
+            self.get_regs_mut().flags.insert(CpuFlags::BREAK);
         } else {
-            self.regs.flags.remove(CpuFlags::BREAK);
+            self.get_regs_mut().flags.remove(CpuFlags::BREAK);
         }
     }
 
     fn interrupt(&mut self) {
-        println!("Cannot handle interrupts. Ignoring...");
+        self.stop_signalled = true;
     }
 
     fn add(&mut self, a: u8, b: u8) -> u8 {
         let mut result = a;
         if (result as usize + b as usize + self.carry() as usize) > 0xff {
-            self.regs.flags.insert(CpuFlags::CARRY);
-            self.regs.flags.insert(CpuFlags::OVERFLOW);
+            self.get_regs_mut().flags.insert(CpuFlags::CARRY);
+            self.get_regs_mut().flags.insert(CpuFlags::OVERFLOW);
             result += b + self.carry() - 0xff;
         } else {
             result += b + self.carry();
@@ -177,7 +214,7 @@ impl<'a> Emulator<'a> {
     fn sub(&mut self, a: u8, b: u8) -> u8 {
         let mut result = a;
         if (result as isize - b as isize - self.carry() as isize) < 0 {
-            self.regs.flags.insert(CpuFlags::CARRY);
+            self.get_regs_mut().flags.insert(CpuFlags::CARRY);
             result = 0xff - (result + b + self.carry());
         } else {
             result -= b + self.carry();
@@ -191,9 +228,9 @@ impl<'a> Emulator<'a> {
     fn shl(&mut self, a: u8) -> u8 {
         let result = a << 1;
         if a >> 7 == 1 {
-            self.regs.flags.insert(CpuFlags::CARRY);
+            self.get_regs_mut().flags.insert(CpuFlags::CARRY);
         } else {
-            self.regs.flags.remove(CpuFlags::CARRY);
+            self.get_regs_mut().flags.remove(CpuFlags::CARRY);
         }
         self.set_zero_or_neg(a);
         result
@@ -202,9 +239,9 @@ impl<'a> Emulator<'a> {
     fn shr(&mut self, a: u8) -> u8 {
         let result = a >> 1;
         if a & 1 == 1 {
-            self.regs.flags.insert(CpuFlags::CARRY);
+            self.get_regs_mut().flags.insert(CpuFlags::CARRY);
         } else {
-            self.regs.flags.remove(CpuFlags::CARRY);
+            self.get_regs_mut().flags.remove(CpuFlags::CARRY);
         }
         self.set_zero_or_neg(a);
         result
@@ -212,7 +249,7 @@ impl<'a> Emulator<'a> {
 
     fn rol(&mut self, a: u8) -> u8 {
         let mut result = self.shl(a);
-        if self.regs.flags.contains(CpuFlags::CARRY) {
+        if self.get_regs().flags.contains(CpuFlags::CARRY) {
             result |= 1;
         }
         self.set_zero_or_neg(result);
@@ -221,7 +258,7 @@ impl<'a> Emulator<'a> {
 
     fn ror(&mut self, a: u8) -> u8 {
         let mut result = self.shr(a);
-        if self.regs.flags.contains(CpuFlags::CARRY) {
+        if self.get_regs().flags.contains(CpuFlags::CARRY) {
             result |= 1 << 7;
         }
         self.set_zero_or_neg(result);
@@ -230,19 +267,19 @@ impl<'a> Emulator<'a> {
 
     fn set_zero_or_neg(&mut self, result: u8) {
         if result == 0 {
-            self.regs.flags.insert(CpuFlags::ZERO);
+            self.get_regs_mut().flags.insert(CpuFlags::ZERO);
         } else {
-            self.regs.flags.remove(CpuFlags::ZERO);
+            self.get_regs_mut().flags.remove(CpuFlags::ZERO);
         }
-        if self.regs.x >= 0b1000_0000 {
-            self.regs.flags.insert(CpuFlags::NEG);
+        if self.get_regs().x >= 0b1000_0000 {
+            self.get_regs_mut().flags.insert(CpuFlags::NEG);
         } else {
-            self.regs.flags.remove(CpuFlags::NEG);
+            self.get_regs_mut().flags.remove(CpuFlags::NEG);
         }
     }
 
     fn carry(&self) -> u8 {
-        if self.regs.flags.contains(CpuFlags::CARRY) {
+        if self.get_regs().flags.contains(CpuFlags::CARRY) {
             1
         } else {
             0
@@ -252,110 +289,133 @@ impl<'a> Emulator<'a> {
     fn execute(&mut self, ins: Instruction) {
         match ins.name {
             InstructionName::lda => {
-                self.regs.a = self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.a);
+                self.get_regs_mut().a = self.read_byte(ins.addressing_mode, ins.operand);
+                let a = self.get_regs().a;
+                self.set_zero_or_neg(a);
             }
             InstructionName::ldx => {
-                self.regs.x = self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.x);
+                self.get_regs_mut().x = self.read_byte(ins.addressing_mode, ins.operand);
+                let x = self.get_regs().x;
+                self.set_zero_or_neg(x);
             }
             InstructionName::ldy => {
-                self.regs.y = self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.y);
+                self.get_regs_mut().y = self.read_byte(ins.addressing_mode, ins.operand);
+                let y = self.get_regs().y;
+                self.set_zero_or_neg(y);
             }
             InstructionName::sta => {
-                self.write_byte(ins.addressing_mode, ins.operand, self.regs.a);
+                let a = self.get_regs().a;
+                self.write_byte(ins.addressing_mode, ins.operand, a);
             }
             InstructionName::stx => {
-                self.write_byte(ins.addressing_mode, ins.operand, self.regs.x);
+                let x = self.get_regs().x;
+                self.write_byte(ins.addressing_mode, ins.operand, x);
             }
             InstructionName::sty => {
-                self.write_byte(ins.addressing_mode, ins.operand, self.regs.y);
+                let y = self.get_regs().y;
+                self.write_byte(ins.addressing_mode, ins.operand, y);
             }
 
             InstructionName::tax => {
-                self.regs.x = self.regs.a;
-                self.set_zero_or_neg(self.regs.x);
+                let a = self.get_regs().a;
+                self.get_regs_mut().x = a;
+                self.set_zero_or_neg(a);
             }
             InstructionName::tay => {
-                self.regs.y = self.regs.a;
-                self.set_zero_or_neg(self.regs.y);
+                let a = self.get_regs().a;
+                self.get_regs_mut().y = a;
+                self.set_zero_or_neg(a);
             }
             InstructionName::txa => {
-                self.regs.a = self.regs.x;
-                self.set_zero_or_neg(self.regs.a);
+                let x = self.get_regs().x;
+                self.get_regs_mut().a = x;
+                self.set_zero_or_neg(x);
             }
             InstructionName::tya => {
-                self.regs.a = self.regs.y;
-                self.set_zero_or_neg(self.regs.a);
+                let y = self.get_regs().y;
+                self.get_regs_mut().a = y;
+                self.set_zero_or_neg(y);
             }
 
             InstructionName::tsx => {
-                self.regs.x = self.regs.sp;
-                self.set_zero_or_neg(self.regs.x);
+                let sp = self.get_regs().sp;
+                self.get_regs_mut().x = sp;
+                self.set_zero_or_neg(sp);
             }
             InstructionName::txs => {
-                self.regs.sp = self.regs.x;
+                let x = self.get_regs().x;
+                self.get_regs_mut().sp = x;
+                self.set_zero_or_neg(x);
             }
             InstructionName::pha => {
-                self.push(self.regs.a);
+                let a = self.get_regs().a;
+                self.push(a);
             }
             InstructionName::php => {
                 self.push_flags();
             }
             InstructionName::pla => {
-                self.regs.a = self.pull();
-                self.set_zero_or_neg(self.regs.a);
+                self.get_regs_mut().a = self.pull();
+                let a = self.get_regs().a;
+                self.set_zero_or_neg(a);
             }
             InstructionName::plp => self.pull_flags(),
 
             InstructionName::and => {
-                self.regs.a = self.regs.a & self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.a);
+                let result = self.get_regs().a & self.read_byte(ins.addressing_mode, ins.operand);
+                self.get_regs_mut().a = result;
+                self.set_zero_or_neg(result);
             }
             InstructionName::eor => {
-                self.regs.a = self.regs.a ^ self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.a);
+                let result = self.get_regs().a ^ self.read_byte(ins.addressing_mode, ins.operand);
+                self.get_regs_mut().a = result;
+                self.set_zero_or_neg(result);
             }
             InstructionName::ora => {
-                self.regs.a = self.regs.a | self.read_byte(ins.addressing_mode, ins.operand);
-                self.set_zero_or_neg(self.regs.a);
+                let result = self.get_regs().a | self.read_byte(ins.addressing_mode, ins.operand);
+                self.get_regs_mut().a = result;
+                self.set_zero_or_neg(result);
             }
             InstructionName::bit => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
                 if byte >> 7 == 1 {
-                    self.regs.flags.insert(CpuFlags::NEG);
+                    self.get_regs_mut().flags.insert(CpuFlags::NEG);
                 }
                 if (byte >> 6) & 1 == 1 {
-                    self.regs.flags.insert(CpuFlags::OVERFLOW);
+                    self.get_regs_mut().flags.insert(CpuFlags::OVERFLOW);
                 }
-                let and = self.regs.a & byte;
+                let and = self.get_regs().a & byte;
                 if and == 0 {
-                    self.regs.flags.insert(CpuFlags::ZERO);
+                    self.get_regs_mut().flags.insert(CpuFlags::ZERO);
                 } else {
-                    self.regs.flags.remove(CpuFlags::ZERO);
+                    self.get_regs_mut().flags.remove(CpuFlags::ZERO);
                 }
             }
 
             InstructionName::adc => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
-                self.regs.a = self.add(self.regs.a, byte);
+                let a = self.get_regs().a;
+                self.get_regs_mut().a = self.add(a, byte);
             }
             InstructionName::sbc => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
-                self.regs.a = self.sub(self.regs.a, byte);
+                let a = self.get_regs().a;
+                self.get_regs_mut().a = self.sub(a, byte);
             }
             InstructionName::cmp => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
-                _ = self.sub(self.regs.a, byte);
+                let a = self.get_regs().a;
+                _ = self.sub(a, byte);
             }
             InstructionName::cpx => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
-                _ = self.sub(self.regs.x, byte);
+                let x = self.get_regs().x;
+                _ = self.sub(x, byte);
             }
             InstructionName::cpy => {
                 let byte = self.read_byte(ins.addressing_mode, ins.operand);
-                _ = self.sub(self.regs.y, byte);
+                let y = self.get_regs().y;
+                _ = self.sub(y, byte);
             }
 
             InstructionName::inc => {
@@ -364,38 +424,42 @@ impl<'a> Emulator<'a> {
                 self.write_byte(ins.addressing_mode, ins.operand, byte);
             }
             InstructionName::inx => {
-                self.regs.x = self.add(self.regs.x, 1);
+                let x = self.get_regs().x;
+                self.get_regs_mut().x = self.add(x, 1);
             }
             InstructionName::iny => {
-                self.regs.y = self.add(self.regs.y, 1);
+                let y = self.get_regs().y;
+                self.get_regs_mut().y = self.add(y, 1);
             }
             InstructionName::dec => {
                 let mut byte = self.read_byte(ins.addressing_mode, ins.operand);
-                let has_carry = self.regs.flags.contains(CpuFlags::CARRY);
+                let has_carry = self.get_regs().flags.contains(CpuFlags::CARRY);
                 byte = self.sub(byte, 1);
                 self.write_byte(ins.addressing_mode, ins.operand, byte);
                 if has_carry {
-                    self.regs.flags.insert(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.insert(CpuFlags::CARRY);
                 } else {
-                    self.regs.flags.remove(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.remove(CpuFlags::CARRY);
                 }
             }
             InstructionName::dex => {
-                let has_carry = self.regs.flags.contains(CpuFlags::CARRY);
-                self.regs.x = self.sub(self.regs.x, 1);
+                let has_carry = self.get_regs().flags.contains(CpuFlags::CARRY);
+                let x = self.get_regs().x;
+                self.get_regs_mut().x = self.sub(x, 1);
                 if has_carry {
-                    self.regs.flags.insert(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.insert(CpuFlags::CARRY);
                 } else {
-                    self.regs.flags.remove(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.remove(CpuFlags::CARRY);
                 }
             }
             InstructionName::dey => {
-                let has_carry = self.regs.flags.contains(CpuFlags::CARRY);
-                self.regs.y = self.sub(self.regs.y, 1);
+                let has_carry = self.get_regs().flags.contains(CpuFlags::CARRY);
+                let y = self.get_regs().y;
+                self.get_regs_mut().y = self.sub(y, 1);
                 if has_carry {
-                    self.regs.flags.insert(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.insert(CpuFlags::CARRY);
                 } else {
-                    self.regs.flags.remove(CpuFlags::CARRY);
+                    self.get_regs_mut().flags.remove(CpuFlags::CARRY);
                 }
             }
 
@@ -435,56 +499,56 @@ impl<'a> Emulator<'a> {
             }
 
             InstructionName::bcc => {
-                if self.regs.flags.contains(CpuFlags::CARRY) {
+                if self.get_regs().flags.contains(CpuFlags::CARRY) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bcs => {
-                if !self.regs.flags.contains(CpuFlags::CARRY) {
+                if !self.get_regs().flags.contains(CpuFlags::CARRY) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::beq => {
-                if !self.regs.flags.contains(CpuFlags::ZERO) {
+                if !self.get_regs().flags.contains(CpuFlags::ZERO) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bmi => {
-                if !self.regs.flags.contains(CpuFlags::NEG) {
+                if !self.get_regs().flags.contains(CpuFlags::NEG) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bne => {
-                if self.regs.flags.contains(CpuFlags::ZERO) {
+                if self.get_regs().flags.contains(CpuFlags::ZERO) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bpl => {
-                if !self.regs.flags.contains(CpuFlags::NEG) {
+                if !self.get_regs().flags.contains(CpuFlags::NEG) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bvc => {
-                if self.regs.flags.contains(CpuFlags::OVERFLOW) {
+                if self.get_regs().flags.contains(CpuFlags::OVERFLOW) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
                 self.set_pc(addr);
             }
             InstructionName::bvs => {
-                if !self.regs.flags.contains(CpuFlags::OVERFLOW) {
+                if !self.get_regs().flags.contains(CpuFlags::OVERFLOW) {
                     return;
                 }
                 let addr = self.get_absolute_address(ins.addressing_mode, ins.operand);
@@ -492,33 +556,34 @@ impl<'a> Emulator<'a> {
             }
 
             InstructionName::clc => {
-                self.regs.flags.remove(CpuFlags::CARRY);
+                self.get_regs_mut().flags.remove(CpuFlags::CARRY);
             }
             InstructionName::cld => {
-                self.regs.flags.remove(CpuFlags::DEC_MODE);
+                self.get_regs_mut().flags.remove(CpuFlags::DEC_MODE);
             }
             InstructionName::cli => {
-                self.regs.flags.remove(CpuFlags::INT_DISABLE);
+                self.get_regs_mut().flags.remove(CpuFlags::INT_DISABLE);
             }
             InstructionName::clv => {
-                self.regs.flags.remove(CpuFlags::OVERFLOW);
+                self.get_regs_mut().flags.remove(CpuFlags::OVERFLOW);
             }
             InstructionName::sec => {
-                self.regs.flags.insert(CpuFlags::CARRY);
+                self.get_regs_mut().flags.insert(CpuFlags::CARRY);
             }
             InstructionName::sed => {
-                self.regs.flags.insert(CpuFlags::DEC_MODE);
+                self.get_regs_mut().flags.insert(CpuFlags::DEC_MODE);
             }
             InstructionName::sei => {
-                self.regs.flags.insert(CpuFlags::INT_DISABLE);
+                self.get_regs_mut().flags.insert(CpuFlags::INT_DISABLE);
             }
 
             InstructionName::brk => {
                 self.interrupt();
-                let ret_addr = self.regs.pc + 2;
+                let ret_addr = self.get_regs().pc + 2;
                 self.push((ret_addr >> 8) as u8);
                 self.push((ret_addr & 0xff) as u8);
-                self.push(self.regs.flags.bits());
+                let flags = self.get_regs().flags.bits();
+                self.push(flags);
             }
             InstructionName::nop => {}
             InstructionName::rti => {

@@ -6,8 +6,8 @@ use crate::instruction::{AddressingMode, Instruction, InstructionName};
 use crate::readwritable::ReadWritable;
 use crate::regs::{CpuFlags, Regs};
 
-const RESET_VEC_LOW_ADDR: u16 = 0xfffc;
-const RESET_VEC_HIGH_ADDR: u16 = 0xfffd;
+pub const RESET_VEC_LOW_ADDR: u16 = 0xfffc;
+pub const RESET_VEC_HIGH_ADDR: u16 = 0xfffd;
 
 pub struct Emulator {
     decoder: Decoder,

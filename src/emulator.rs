@@ -8,6 +8,8 @@ use crate::regs::{CpuFlags, Regs};
 
 pub const RESET_VEC_LOW_ADDR: u16 = 0xfffc;
 pub const RESET_VEC_HIGH_ADDR: u16 = 0xfffd;
+pub const IRQ_VEC_LOW_ADDR: u16 = 0xfffe;
+pub const IRQ_VEC_HIGH_ADDR: u16 = 0xffff;
 
 pub struct Emulator {
     decoder: Decoder,
@@ -45,12 +47,14 @@ impl Emulator {
     }
 
     pub fn run<F: Fn(&Regs, &dyn ReadWritable) -> bool>(&mut self, on_break: F) {
+        self.stop_signalled = false;
         let reset_addr = self.get_reset_addr();
         self.set_pc(reset_addr);
         loop {
             while !self.stop_signalled {
                 self.execute_next();
             }
+            self.stop_signalled = false;
             if on_break(&*self.get_regs(), &**self.get_bus()) {
                 break;
             }
@@ -86,9 +90,15 @@ impl Emulator {
         self.get_bus_mut().write(addr, byte);
     }
 
-    fn get_reset_addr(&mut self) -> u16 {
+    fn get_reset_addr(&self) -> u16 {
         let low = self.get_bus().read(RESET_VEC_LOW_ADDR) as u16;
         let high = self.get_bus().read(RESET_VEC_HIGH_ADDR) as u16;
+        (high << 8) | low
+    }
+
+    fn get_irq_addr(&self) -> u16 {
+        let low = self.get_bus().read(IRQ_VEC_LOW_ADDR) as u16;
+        let high = self.get_bus().read(IRQ_VEC_HIGH_ADDR) as u16;
         (high << 8) | low
     }
 
@@ -202,6 +212,8 @@ impl Emulator {
 
     fn interrupt(&mut self) {
         self.stop_signalled = true;
+        let irq_addr = self.get_irq_addr();
+        self.set_pc(irq_addr);
     }
 
     fn add(&mut self, a: u8, b: u8) -> u8 {

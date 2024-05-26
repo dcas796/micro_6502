@@ -603,12 +603,14 @@ impl Emulator {
             }
 
             InstructionName::brk => {
-                self.interrupt();
-                let ret_addr = self.get_regs().pc + 2;
-                self.push((ret_addr >> 8) as u8);
-                self.push((ret_addr & 0xff) as u8);
-                let flags = self.get_regs().flags.bits();
-                self.push(flags);
+                if !self.get_regs().flags.contains(CpuFlags::INT_DISABLE) {
+                    self.interrupt();
+                    let ret_addr = self.get_regs().pc + 2;
+                    self.push((ret_addr >> 8) as u8);
+                    self.push((ret_addr & 0xff) as u8);
+                    let flags = self.get_regs().flags.bits();
+                    self.push(flags);
+                }
             }
             InstructionName::nop => {}
             InstructionName::rti => {

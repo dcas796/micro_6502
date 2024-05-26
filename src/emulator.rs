@@ -41,11 +41,19 @@ impl Emulator {
     }
 
     pub fn run_until_break(&mut self) {
+        self.run(|_, _| true)
+    }
+
+    pub fn run<F: Fn(&Regs, &dyn ReadWritable) -> bool>(&mut self, on_break: F) {
         let reset_addr = self.get_reset_addr();
         self.set_pc(reset_addr);
-        while !self.stop_signalled {
-            let instruction = self.decode_next();
-            self.execute(instruction);
+        loop {
+            while !self.stop_signalled {
+                self.execute_next();
+            }
+            if on_break(&*self.get_regs(), &**self.get_bus()) {
+                break;
+            }
         }
     }
 
@@ -284,6 +292,11 @@ impl Emulator {
         } else {
             0
         }
+    }
+
+    fn execute_next(&mut self) {
+        let instruction = self.decode_next();
+        self.execute(instruction);
     }
 
     fn execute(&mut self, ins: Instruction) {
